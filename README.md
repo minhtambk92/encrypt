@@ -27,6 +27,18 @@
 
 ## Project setup
 
+```env
+# Phải là 32 ký tự (256-bit) cho AES-256
+ENCRYPTION_KEY=my32characterlongsecretkey123456
+
+# Một secret khác cho HMAC
+HMAC_KEY=mySuperSecureHmacKey!@#
+
+# Đường dẫn đến Elasticsearch
+ES_NODE=https://localhost:9200
+ES_PASSWORD=JMpPH7rPl-zBF6_d5iAp
+```
+
 ```bash
 $ npm install
 ```
