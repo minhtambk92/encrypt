@@ -1,17 +1,18 @@
 import { Module } from '@nestjs/common';
-import {ConfigModule, ConfigService} from "@nestjs/config";
-import { UserService } from './user.service';
-import { UserController } from './user.controller';
-import { CryptoModule } from '../crypto/crypto.module';
-import ElasticsearchModule  from '../elasticsearch/elasticsearch.module';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigModule } from "@nestjs/config";
+// import { UserService } from './user.service';
+import { TestCryptoController } from './user.controller';
+import { User } from './entities/user.entity';
 
 @Module({
   imports: [
     ConfigModule,
-    CryptoModule, // Anh đã có cái này
-    ElasticsearchModule,
+    // Đây là dòng quan trọng nhất: Đăng ký Entity User vào Module này
+    TypeOrmModule.forFeature([User]),
   ],
-  providers: [UserService],
-  controllers: [UserController]
+  // providers: [UserService],
+  controllers: [TestCryptoController],
+  exports: [],
 })
 export class UserModule {}

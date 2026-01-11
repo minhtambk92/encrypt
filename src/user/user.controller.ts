@@ -1,24 +1,38 @@
 // src/user/user.controller.ts
-import { Controller, Post, Body, Get, Query } from '@nestjs/common';
-import { UserService } from './user.service';
-import { CreateUserDto } from './dto/create-user.dto';
+import { Controller, Get, Post, Body } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from './entities/user.entity';
 
-@Controller('user')
-export class UserController {
-    constructor(private readonly userService: UserService) {}
+@Controller('test-crypto')
+export class TestCryptoController {
+  constructor(
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+  ) {}
 
-    @Post()
-    create(@Body() createUserDto: CreateUserDto) {
-        return this.userService.createUser(createUserDto);
-    }
+  @Post('save')
+  async saveUser(@Body() data: { username: string; email: string }) {
+    const user = new User();
+    user.username = data.username;
+    user.email = data.email;
 
-    @Get('search')
-    findByEmail(@Query('email') email: string) {
-        return this.userService.findByEmail(email);
-    }
+    // Khi gọi save(), CryptoSubscriber sẽ tự động mã hóa email, 
+    // tạo email_hash và email_bigram trước khi ghi vào Postgres.
+    const savedUser = await this.userRepository.save(user);
+    return {
+      message: 'Đã lưu vào DB thành công!',
+      dataSavedInEntity: savedUser, 
+    };
+  }
 
-    @Get('searchByUsername')
-    findByUsername(@Query('username') username: string) {
-        return this.userService.findByUsername(username);
-    }
+  @Get('get-all')
+  async getAll() {
+    // Khi gọi find(), CryptoSubscriber sẽ tự động giải mã email sau khi load từ DB.
+    const users = await this.userRepository.find();
+    return {
+      message: 'Dữ liệu lấy từ DB (đã tự động giải mã):',
+      users,
+    };
+  }
 }

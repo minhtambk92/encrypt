@@ -1,64 +1,107 @@
 // src/crypto/services/crypto-manipulation.service.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { 
+  CRYPTO_TARGET, 
+  CRYPTO_FIELD, 
+  CRYPTO_HASH_FIELD, 
+  CRYPTO_BIGRAM_FIELD,
+  BigramOptions 
+} from '../decorators/crypto.decorator';
 import { CipherService } from './cipher.service';
 import { HmacService } from './hmac.service';
 import { BigramService } from './bigram.service';
-import { CspService } from './csp.service';
-import { CRYPTO_TARGET, CRYPTO_FIELD, CRYPTO_HASH_FIELD, CRYPTO_BIGRAM_FIELD, BigramOptions } from '../decorators/crypto.decorator';
 
 @Injectable()
 export class CryptoTargetManipulationService {
+  private readonly logger = new Logger(CryptoTargetManipulationService.name);
 
-    private readonly KMS_AES_KEYNAME = process.env.KMS_AES_KEYNAME || '';
-    constructor(
-        private cipherService: CipherService,
-        private hmacService: HmacService,
-        private bigramService: BigramService,
-        private cspService: CspService,
-    ) { }
+  constructor(
+    private readonly cipherService: CipherService,
+    private readonly hmacService: HmacService,
+    private readonly bigramService: BigramService,
+  ) {}
 
-    async manipulate(obj: any, mode: 'encrypt' | 'decrypt') {
-        if (!obj || typeof obj !== 'object') return;
-        const target = Array.isArray(obj) ? obj[0] : obj;
-        if (!target) return;
+  /**
+   * Hàm điều phối chính (Tương đương logic trong Java)
+   * @param obj Đối tượng cần xử lý (Entity hoặc DTO)
+   * @param mode Chế độ 'encrypt' (trước khi lưu) hoặc 'decrypt' (sau khi lấy lên)
+   */
+  async manipulate(obj: any, mode: 'encrypt' | 'decrypt'): Promise<void> {
+    if (!obj || typeof obj !== 'object') return;
 
-        const isCryptoTarget = Reflect.getMetadata(CRYPTO_TARGET, target.constructor);
-        if (!isCryptoTarget) return;
+    // Xử lý nếu là mảng (ví dụ: kết quả trả về từ findMany)
+    if (Array.isArray(obj)) {
+      for (const item of obj) {
+        await this.processObject(item, mode);
+      }
+    } else {
+      await this.processObject(obj, mode);
+    }
+  }
 
-        const dek = await this.cspService.getDek(this.KMS_AES_KEYNAME);
+  private async processObject(obj: any, mode: 'encrypt' | 'decrypt'): Promise<void> {
+    const targetClass = obj.constructor;
 
-        if (Array.isArray(obj)) {
-            for (const item of obj) await this.processFields(item, dek, mode);
-        } else {
-            await this.processFields(obj, dek, mode);
-        }
+    // 1. Kiểm tra xem Class có đánh dấu @CryptoTarget không
+    const isCryptoTarget = Reflect.getMetadata(CRYPTO_TARGET, targetClass);
+    if (!isCryptoTarget) return;
+
+    // 2. Lấy danh sách các fields cần xử lý từ Metadata
+    const cryptoFields = Reflect.getMetadata(CRYPTO_FIELD, obj) || {};
+    const hashFields = Reflect.getMetadata(CRYPTO_HASH_FIELD, obj) || {};
+    const bigramFields = Reflect.getMetadata(CRYPTO_BIGRAM_FIELD, obj) || {};
+
+    try {
+      if (mode === 'encrypt') {
+        await this.handleEncryption(obj, cryptoFields, hashFields, bigramFields);
+      } else {
+        await this.handleDecryption(obj, cryptoFields);
+      }
+    } catch (error) {
+      this.logger.error(`Lỗi thao tác dữ liệu crypto ở chế độ ${mode}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Logic xử lý khi ENCRYPT (Lưu xuống DB)
+   */
+  private async handleEncryption(obj: any, cryptoFields: any, hashFields: any, bigramFields: any) {
+    // A. Mã hóa AES-GCM cho các trường @CryptoField
+    for (const field in cryptoFields) {
+      if (obj[field]) {
+        obj[field] = this.cipherService.encrypt(obj[field]);
+      }
     }
 
-    private async processFields(obj: any, dek: string, mode: 'encrypt' | 'decrypt') {
-        const proto = obj.constructor;
-
-        // 1. Xử lý CryptoField (Mã hóa đối xứng)
-        const cryptoFields = Reflect.getMetadata(CRYPTO_FIELD, proto) || {};
-        for (const field in cryptoFields) {
-            obj[field] = mode === 'encrypt'
-                ? this.cipherService.encrypt(obj[field], dek)
-                : this.cipherService.decrypt(obj[field], dek);
-        }
-
-        // 2. Xử lý CryptoHashField (HMAC) - Thường chỉ lúc encrypt (Insert/Update)
-        if (mode === 'encrypt') {
-            const hashFields = Reflect.getMetadata(CRYPTO_HASH_FIELD, proto) || {};
-            for (const field in hashFields) {
-                obj[field] = this.hmacService.hash(obj[field], dek);
-            }
-
-            // 3. Xử lý CryptoHashBigramField
-            const bigramFields = Reflect.getMetadata(CRYPTO_BIGRAM_FIELD, proto) || {};
-            for (const field in bigramFields) {
-                const options: BigramOptions = bigramFields[field];
-                const sourceValue = obj[options.targetFieldName];
-                obj[field] = this.bigramService.process(sourceValue, options.includingBigram);
-            }
-        }
+    // B. Tạo HMAC-SHA256 cho các trường @CryptoHashField (Blind Index)
+    for (const field in hashFields) {
+      if (obj[field]) {
+        obj[field] = this.hmacService.hash(obj[field]);
+      }
     }
+
+    // C. Tạo Bigram Hash cho các trường @CryptoHashBigramField
+    for (const field in bigramFields) {
+      const options: BigramOptions = bigramFields[field];
+      const sourceValue = obj[options.targetFieldName]; // Lấy plaintext từ trường gốc
+      
+      if (sourceValue) {
+        obj[field] = this.bigramService.process(sourceValue, options.includingBigram);
+      }
+    }
+  }
+
+  /**
+   * Logic xử lý khi DECRYPT (Lấy từ DB lên)
+   */
+  private async handleDecryption(obj: any, cryptoFields: any) {
+    // Chỉ giải mã các trường @CryptoField
+    // Các trường Hash (HMAC/Bigram) không cần giải mã vì chúng là mã băm một chiều
+    for (const field in cryptoFields) {
+      if (obj[field]) {
+        obj[field] = this.cipherService.decrypt(obj[field]);
+      }
+    }
+  }
 }

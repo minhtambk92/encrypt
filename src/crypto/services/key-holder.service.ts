@@ -21,12 +21,26 @@ export class KeyHolderService implements OnModuleInit {
       return;
     }
 
-    // Lấy DEK từ CSP Service và lưu vào bộ nhớ
-    this.dek = await this.cspService.getDek(keyName);
-    this.logger.log(`Đã load và lưu DEK thành công cho key: ${keyName}`);
+    // // Lấy DEK từ CSP Service và lưu vào bộ nhớ
+    // this.dek = await this.cspService.getDek(keyName);
+    // this.logger.log(`Đã load và lưu DEK thành công cho key: ${keyName}`);
   }
 
+  /**
+   * Cập nhật DEK mới vào bộ nhớ
+   */
+  updateDek(newDek: Buffer) {
+    this.dek = newDek;
+    this.logger.log('KeyHolderService: Đã cập nhật DEK mới vào RAM.');
+  }
+
+  /**
+   * Lấy DEK hiện tại
+   */
   getDek(): Buffer {
+    if (!this.dek) {
+      throw new Error('DEK chưa được khởi tạo. Vui lòng kiểm tra luồng nạp khóa.');
+    }
     return this.dek;
   }
 }

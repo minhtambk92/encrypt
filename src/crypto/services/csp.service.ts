@@ -1,8 +1,8 @@
 // src/crypto/services/csp.service.ts
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
-import * as crypto from 'crypto';
 import { firstValueFrom } from 'rxjs';
+import * as forge from 'node-forge';
 import { DekRequest } from '../dto/dek-request.dto';
 import { DekResponse } from '../dto/dek-response.dto';
 
@@ -10,99 +10,66 @@ import { DekResponse } from '../dto/dek-response.dto';
 export class CspService {
   private readonly logger = new Logger(CspService.name);
   
-  // Cache lưu trữ DEK dưới dạng Buffer (byte array)
-  private dekCache = new Map<string, Buffer>();
-  
-  private privateKey: crypto.KeyObject;
-  private publicKey: crypto.KeyObject;
+  // Lưu trữ KeyPair theo chuẩn của forge
+  private keyPair: forge.pki.rsa.KeyPair;
 
-  private readonly KMS_URL = process.env.KMS_URL || 'https://kms-provider.com/v1/get-dek';
+  constructor(private readonly httpService: HttpService) {}
 
-  constructor(private readonly httpService: HttpService) {
-    this.generateKeyPair();
-  }
-
+  /**
+   * Tương đương KeyPairGenerator(2048) của Java
+   */
   private generateKeyPair(): void {
-    const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
-      modulusLength: 2048,
-    });
-    this.privateKey = privateKey;
-    this.publicKey = publicKey;
-    this.logger.log('Đã khởi tạo xong KeyPair RSA 2048.');
+    // Sinh cặp khóa RSA 2048 bits
+    this.keyPair = forge.pki.rsa.generateKeyPair(2048);
+    this.logger.log('Đã sinh cặp RSA KeyPair 2048 bằng node-forge.');
   }
 
+  /**
+   * Tương đương keypair.getPublic().getEncoded() trong Java
+   * Xuất ra định dạng SubjectPublicKeyInfo (X.509) DER -> Base64
+   */
   private getEncodedPublicKey(): string {
-    return this.publicKey.export({
-      type: 'spki',
-      format: 'der',
-    }).toString('base64');
+    const asn1 = forge.pki.publicKeyToAsn1(this.keyPair.publicKey);
+    const der = forge.asn1.toDer(asn1).getBytes();
+    return forge.util.encode64(der);
   }
 
-  /**
-   * Sửa lại hàm getDek theo logic Java: 
-   * Base64.getDecoder().decode(decryptDek(encryptDex, keyPair))
-   */
   async getDek(keyName: string): Promise<Buffer> {
-    if (this.dekCache.has(keyName)) {
-      return this.dekCache.get(keyName) || Buffer.alloc(0);
-    }
-
-    try {
-      const dekRequest = new DekRequest(this.getEncodedPublicKey());
-
-      // 1. Lấy dữ liệu đã parse từ Hex (Tương đương HexFormat.of().parseHex)
-      const encryptedDekBuffer = await this.fetchEncryptedDekFromKms(keyName, dekRequest);
-
-      // 2. Giải mã RSA bằng Private Key
-      // Kết quả trả về từ RSA Decrypt trong trường hợp này là một chuỗi Base64 (theo logic Java của anh)
-      const base64DecryptedString = this.decryptDekWithRsa(encryptedDekBuffer);
-
-      // 3. Giải mã Base64 để lấy byte array cuối cùng (DEK thực tế)
-      // Tương đương: Base64.getDecoder().decode(...)
-      const finalDekBuffer = Buffer.from(base64DecryptedString, 'base64');
-
-      this.dekCache.set(keyName, finalDekBuffer);
-      return finalDekBuffer;
-
-    } catch (error) {
-      this.logger.error(`Lỗi lấy DEK cho key: ${keyName}`, error.stack);
-      throw new InternalServerErrorException(`Failed to retrieve DEK for ${keyName}`);
-    }
-  }
-
-  /**
-   * Sửa lại hàm fetchEncryptedDekFromKms:
-   * Trả về Buffer từ chuỗi Hex (Tương đương HexFormat.of().parseHex)
-   */
-  private async fetchEncryptedDekFromKms(keyName: string, requestBody: DekRequest): Promise<Buffer> {
-    const url = `${this.KMS_URL}/${keyName}`;
+    this.generateKeyPair();
+    const encodedPublicKey = this.getEncodedPublicKey();
+    const dekRequest = new DekRequest(encodedPublicKey);
     
-    const { data } = await firstValueFrom(
-      this.httpService.post<DekResponse>(url, requestBody)
-    );
+    // 1. Lấy dữ liệu Hex từ KMS
+    const encryptedDekHex = await this.fetchEncryptedDekFromKms(keyName, dekRequest);
 
-    if (!data || !data.cipherText) {
-      throw new Error(`KMS trả về kết quả không hợp lệ cho key: ${keyName}`);
-    }
+    // 2. Giải mã RSA PKCS1 v1.5 (Khớp với Java "RSA")
+    const base64DecryptedString = this.decryptWithForge(encryptedDekHex);
 
-    // Chuyển chuỗi Hex nhận từ KMS thành byte array (Buffer)
-    // HexFormat.of().parseHex(dekResponse.cipherText)
-    return Buffer.from(data.cipherText, 'hex');
+    // 3. Trả về Buffer cuối cùng
+    return Buffer.from(base64DecryptedString, 'base64');
   }
 
   /**
-   * Giải mã RSA (Tương đương decryptDek trong Java)
+   * Giải mã bằng thuật toán RSA ES PKCS1 v1.5
+   * Không phụ thuộc vào OpenSSL của hệ thống
    */
-  private decryptDekWithRsa(encryptedBuffer: Buffer): string {
-    const decryptedBuffer = crypto.privateDecrypt(
-      {
-        key: this.privateKey,
-        padding: crypto.constants.RSA_PKCS1_PADDING, 
-      },
-      encryptedBuffer
-    );
+  private decryptWithForge(encryptedHex: string): string {
+    try {
+      const encryptedBytes = forge.util.hexToBytes(encryptedHex);
+      
+      // Giải mã với scheme RSAES-PKCS1-V1_5 (Tương đương RSA/ECB/PKCS1Padding)
+      const decrypted = this.keyPair.privateKey.decrypt(encryptedBytes, 'RSAES-PKCS1-V1_5');
+      
+      return decrypted.toString();
+    } catch (error) {
+      this.logger.error(`Lỗi giải mã Forge: ${error.message}`);
+      throw new InternalServerErrorException('RSA Decryption failed with Forge');
+    }
+  }
 
-    // Chuyển kết quả giải mã RSA thành chuỗi (đây là chuỗi Base64 trước khi decode bước cuối)
-    return decryptedBuffer.toString('utf8');
+  private async fetchEncryptedDekFromKms(keyName: string, requestBody: DekRequest): Promise<string> {
+    const url = `${process.env.KMS_URL}/${keyName}`;
+    const { data } = await firstValueFrom(this.httpService.post<DekResponse>(url, requestBody));
+    return data.cipherText; // Giữ nguyên chuỗi Hex nhận từ KMS
   }
 }

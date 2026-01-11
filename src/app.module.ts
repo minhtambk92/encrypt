@@ -1,24 +1,33 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import ElasticsearchModule  from './elasticsearch/elasticsearch.module';
-import { CryptoService } from './crypto/crypto.service';
+import { ConfigModule } from '@nestjs/config';
 import { CryptoModule } from './crypto/crypto.module';
+import { DatabaseModule } from './database/database.module';
+import { MockKmsController } from './mock/mock-kms.controller';
 import { UserModule } from './user/user.module';
-import { SeedModule } from './seed/seed.module';
+// import { CryptoService } from './crypto/crypto.service';
+// import { SeedModule } from './seed/seed.module';
+// import ElasticsearchModule  from './elasticsearch/elasticsearch.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
-      isGlobal: true, // Rất quan trọng
+      isGlobal: true, // Để các module khác không cần import lại ConfigModule
     }),
-    ElasticsearchModule,
+    DatabaseModule,
+    // ElasticsearchModule,
     CryptoModule,
     UserModule,
-    SeedModule
+    // SeedModule
   ],
-  controllers: [AppController],
-  providers: [AppService, CryptoService],
+  controllers: [
+    MockKmsController,
+    AppController
+  ],
+  providers: [
+    AppService, 
+    // CryptoService
+  ],
 })
 export class AppModule {}

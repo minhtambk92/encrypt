@@ -1,36 +1,33 @@
 // src/crypto/services/hmac.service.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { KeyHolderService } from './key-holder.service';
 
 @Injectable()
 export class HmacService {
-  /**
-   * Thực hiện hash dữ liệu bằng thuật toán HMAC-SHA256
-   * @param data Dữ liệu cần hash (thường là plaintext)
-   * @param key Chìa khóa DEK lấy từ CSP
-   * @returns Chuỗi hash định dạng Hex
-   */
-  hash(data: string, key: string): string {
-    if (!data) return data;
+  private readonly ALGORITHM = 'sha256';
 
-    // Lưu ý: Để đồng bộ search giữa Java và NestJS, 
-    // anh nên thống nhất việc normalize dữ liệu (ví dụ: toLowerCase)
-    const normalizedData = data.toLowerCase().trim();
-
-    return crypto
-      .createHmac('sha256', key)
-      .update(normalizedData, 'utf8')
-      .digest('hex'); // Trả về định dạng hex để lưu vào DB tương thích với Java
-  }
+  constructor(private readonly keyHolderService: KeyHolderService) {}
 
   /**
-   * So sánh dữ liệu plaintext với một mã hash có sẵn
+   * Tạo HMAC tương thích với javax.crypto.Mac bên Java
+   * Output: Hex string
    */
-  verify(data: string, hash: string, key: string): boolean {
-    const newHash = this.hash(data, key);
-    return crypto.timingSafeEqual(
-      Buffer.from(hash, 'hex'),
-      Buffer.from(newHash, 'hex'),
-    );
+  hash(plainText: string): string {
+    if (!plainText) return plainText;
+
+    try {
+      const dek = this.keyHolderService.getDek();
+      
+      // Đồng bộ hóa với Java: Thường Java sẽ trim và lowercase trước khi hash để search
+      const normalizedData = plainText.trim().toLowerCase();
+
+      return crypto
+        .createHmac(this.ALGORITHM, dek)
+        .update(normalizedData, 'utf8')
+        .digest('hex');
+    } catch (error) {
+      throw new InternalServerErrorException('HMAC generation failed: ' + error.message);
+    }
   }
 }
