@@ -8,7 +8,13 @@ export const CRYPTO_BIGRAM_FIELD = 'crypto:bigram_field';
 
 export const CryptoTarget = () => ReflectMetadata(CRYPTO_TARGET, true);
 export const CryptoField = () => ReflectMetadata(CRYPTO_FIELD, true);
-export const CryptoHashField = () => ReflectMetadata(CRYPTO_HASH_FIELD, true);
+
+export interface HashOptions {
+  targetFieldName: string;
+  trim: boolean;
+}
+
+export const CryptoHashField = (options: HashOptions) => ReflectMetadata(CRYPTO_HASH_FIELD, options);
 
 export interface BigramOptions {
   targetFieldName: string;

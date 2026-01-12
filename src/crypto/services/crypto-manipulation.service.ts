@@ -5,7 +5,8 @@ import {
   CRYPTO_FIELD, 
   CRYPTO_HASH_FIELD, 
   CRYPTO_BIGRAM_FIELD,
-  BigramOptions 
+  BigramOptions,
+  HashOptions
 } from '../decorators/crypto.decorator';
 import { CipherService } from './cipher.service';
 import { HmacService } from './hmac.service';
@@ -75,9 +76,18 @@ export class CryptoTargetManipulationService {
     }
 
     // B. Tạo HMAC-SHA256 cho các trường @CryptoHashField (Blind Index)
-    for (const field in hashFields) {
-      if (obj[field]) {
-        obj[field] = this.hmacService.hash(obj[field]);
+   for (const targetField in hashFields) {
+    const options: HashOptions = hashFields[targetField];
+    let sourceValue = obj[options.targetFieldName];
+    
+    if (sourceValue && typeof sourceValue === 'string') {
+        // Thực hiện trim nếu được yêu cầu
+        if (options.trim) {
+          sourceValue = sourceValue.trim();
+        }
+        
+        // Gán giá trị băm vào trường đích (ví dụ: emailHash)
+        obj[targetField] = this.hmacService.hash(sourceValue);
       }
     }
 

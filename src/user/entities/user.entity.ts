@@ -20,7 +20,7 @@ export class User {
   @Column({ name: 'email_encrypted' })
   email: string;
 
-  @CryptoHashField() // Sẽ được băm HMAC-SHA256 để search chính xác
+  @CryptoHashField({ targetFieldName: 'email', trim: true }) // Sẽ được băm HMAC-SHA256 để search chính xác
   @Column({ name: 'email_hash' })
   emailHash: string;
 
